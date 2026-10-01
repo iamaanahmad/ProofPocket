@@ -7,9 +7,11 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.iamaanahmad.proofpocket"
     },
     "android": {
+      "package": "com.iamaanahmad.proofpocket",
       "adaptiveIcon": {
         "backgroundColor": "#103D3C",
         "foregroundImage": "./assets/android-icon-foreground.png",
