@@ -40,11 +40,11 @@ Logging and checks never need a subscription or a network. Plus is sold through 
 ```bash
 git clone https://github.com/iamaanahmad/ProofPocket.git
 cd ProofPocket
-npm ci
+npm install
 npx expo start
 ```
 
-Open it in Expo Go (or press `w` for the web preview). On the empty **Overview**, tap **Load demo data**, then open **Check**: Cafe Aroma's September shows ₹1,080 missing, and QuickDash shows 30 of 240 deliveries unpaid. Then start a shift on **Timer**, take a break, end it, and watch it file itself.
+Open it in Expo Go (or press `w` for the web preview). On the empty **Overview**, tap **Load demo data**, then open **Check**: Cafe Aroma's September shows ₹1,080 missing, and QuickDash shows ₹2,700 missing (60 of 570 deliveries unpaid). Then start a shift on **Timer**, take a break, end it, and watch it file itself.
 
 To exercise the real paywall, use a development build with a RevenueCat public SDK key in `.env`:
 
