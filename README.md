@@ -56,10 +56,13 @@ The ledger tests cover partial payments, overpayment, corrupted data, totals, CS
 ## Demo and entry status
 
 - [Walkthrough video](demo.mp4)
+- [Shipaton-size screenshot](shipaton-screenshot.png) (1179 × 2556)
 - [Overview screenshot](overview.png)
 - [Shipaton 2026 rules](https://revenuecat-shipaton-2026.devpost.com/rules)
 
 The entrant must select the correct track and submit the project. The Next Gen track requires current student status, the specified academic email, an open-source license, a public repository, and a demo video. The main track requires a newly published store app. This source package alone does not prove either track's eligibility. No Devpost receipt or store release is claimed.
+
+Devpost's Shipaton guide asks for the demo on public or unlisted YouTube or Vimeo. The repository video is ready for the entrant to upload; its GitHub link alone is not the required video host.
 
 ## Project map
 
