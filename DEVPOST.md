@@ -10,6 +10,8 @@ Gig workers and part-time students get underpaid quietly: an hour missing here, 
 
 ## The problem
 
+The scale is not small: India counted 7.7 million gig workers in 2020-21, a figure NITI Aayog projects to reach 23.5 million by 2029-30 (*India's Booming Gig and Platform Economy*, 2022). Almost none of them holds an independent record of the work behind a payout.
+
 - Millions of delivery riders, warehouse pickers, cafe and retail staff, and students working part-time are paid per hour, per delivery, or per task.
 - Payouts are frequently wrong, and workers hold no independent record. Their hours live inside the platform's app, the same system that underpaid them.
 - Existing shift trackers are cloud accounts with generic timesheets. None of them check the payout, most need connectivity, and none are built for cheap phones on patchy networks.

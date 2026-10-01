@@ -2,13 +2,19 @@
 
 **The offline shift and pay log that proves you got paid what you actually earned.**
 
-![ProofPocket overview](overview.png)
+<p>
+  <img src="overview.png" width="250" alt="ProofPocket home: this month's missing pay at a glance" />
+  <img src="timer.png" width="250" alt="Live shift timer with breaks and a task counter" />
+  <img src="shipaton-screenshot.png" width="250" alt="Payout check: ₹1,080 missing pay, translated back into unpaid hours" />
+</p>
 
 ProofPocket is built for gig workers, delivery riders, and part-time students whose pay is frequently short and who hold no record of their own. Log every shift by the hour, task or day, record what actually landed, and ProofPocket shows the gap in red: *You logged 11.5 hours. They paid you for 8. ₹630 missing.* One tap turns that into a dated PDF evidence packet. Everything runs on the device. No account, no server, no connection required.
 
 Built with Expo / React Native + TypeScript for the **RevenueCat Shipaton 2026 · Next Gen (student) track**. Open source under MIT.
 
 ## The problem
+
+The scale is not small: India alone counted 7.7 million gig workers in 2020-21, a figure NITI Aayog projects to reach 23.5 million by 2029-30 ([NITI Aayog, *India's Booming Gig and Platform Economy*, 2022](https://economictimes.indiatimes.com/jobs/gig-workers-in-india-to-top-23-million-by-2029-30-niti-aayog-report/articleshow/92489976.cms)). Almost none of them holds an independent record of the work behind a payout.
 
 - People paid by the hour, delivery or task get underpaid quietly: an hour missing here, forty deliveries short there.
 - Their only record lives inside the platform app that underpaid them. Chat threads and screenshots do not add up to proof.
@@ -59,7 +65,7 @@ A RevenueCat **Test Store** key is enough to buy Monthly / Yearly / Lifetime end
 
 - `ledger.ts` is a pure, tested core: per-unit pay math, settled locking, the payout-check calculation, PDF/CSV packet generation, timer math, and migration of first-version records. `App.tsx` is interface only. `purchases.ts` isolates every RevenueCat call behind lazy native loading, so the app also runs in Expo Go.
 - Records persist in AsyncStorage with corruption-safe reads. Nothing leaves the device unless the user shares an export. No analytics, no tracking, no backend to breach or shut down.
-- Verification, all passing: 14 ledger unit tests (`npx tsx --test tests/ledger.test.ts`), `npx tsc --noEmit`, and a full bundle export (`npx expo export --platform web`).
+- Verification, all passing: 14 ledger unit tests (`npx tsx tests/ledger.test.ts`), `npx tsc --noEmit`, and a full bundle export (`npx expo export --platform web`).
 
 ## Entry status (honest checklist)
 
