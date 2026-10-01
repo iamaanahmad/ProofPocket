@@ -3,9 +3,7 @@
 **The offline shift and pay log that proves you got paid what you actually earned.**
 
 <p>
-  <img src="overview.png" width="250" alt="ProofPocket home: this month's missing pay at a glance" />
-  <img src="timer.png" width="250" alt="Live shift timer with breaks and a task counter" />
-  <img src="shipaton-screenshot.png" width="250" alt="Payout check: ₹1,080 missing pay, translated back into unpaid hours" />
+  <img src="assets/icon.png" width="180" alt="ProofPocket app icon" />
 </p>
 
 ProofPocket is built for gig workers, delivery riders, and part-time students whose pay is frequently short and who hold no record of their own. Log every shift by the hour, task or day, record what actually landed, and ProofPocket shows the gap in red: *You logged 11.5 hours. They paid you for 8. ₹630 missing.* One tap turns that into a dated PDF evidence packet. Everything runs on the device. No account, no server, no connection required.
