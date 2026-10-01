@@ -40,7 +40,7 @@ The app also opens in Expo Go for a quick look or for filming the demo: the stor
 The app uses `react-native-purchases`. To enable Plus in a native development or store build:
 
 1. Create a RevenueCat project and connect the intended App Store or Google Play app.
-2. Create a `plus` entitlement and attach a subscription product to the current offering.
+2. Create a `proofpocket` entitlement and attach the Monthly, Yearly and Lifetime products to the current offering. The paywall lists every package in the offering, so all three can be sold from day one.
 3. Set the platform-specific public SDK key as `EXPO_PUBLIC_REVENUECAT_API_KEY` in the build environment. Do not use a secret API key.
 4. Build and install the app with the native SDK. Test purchase and restore with store sandbox accounts before release.
 
@@ -69,7 +69,7 @@ Submission checklist status:
 - Public repository with full source and run instructions: done.
 - Open-source license detected by GitHub: MIT, in the root `LICENSE` file.
 - Demo video: the in-repo recording is a preview. For the entry, record the app on a device with an Expo development build, keep it under two minutes, and post it publicly or unlisted on YouTube or Vimeo. The in-app demo data makes filming a full payout-check story take minutes.
-- RevenueCat: add a public SDK key (a Test Store key is enough for a sandbox demo) so the Plus paywall runs live on camera. Purchase and restore flows are implemented against the `plus` entitlement but are only exercised once a key exists.
+- RevenueCat: add a public SDK key (a Test Store key is enough for a sandbox demo) so the Plus paywall runs live on camera. Purchase and restore flows are implemented against the `proofpocket` entitlement but are only exercised once a key exists.
 - The entrant submits personally on Devpost under the Next Gen (student) track with their academic email. Next Gen is judged on the demo video and this repository, not on store presence or revenue.
 
 This source package alone does not prove track eligibility. No Devpost receipt or store release is claimed.

@@ -32,7 +32,7 @@ Gig workers and part-time students get underpaid quietly: an hour missing here, 
 ## Monetization (RevenueCat)
 
 - **Free, forever:** unlimited shift logging, the live timer, payout checks, and CSV export.
-- **ProofPocket Plus (RevenueCat subscription, `plus` entitlement):** one-tap PDF evidence packets per client, monthly PDF pay reports across clients, and full payment timelines inside every report.
+- **ProofPocket Plus (RevenueCat subscription, `proofpocket` entitlement, Monthly / Yearly / Lifetime plans):** one-tap PDF evidence packets per client, monthly PDF pay reports across clients, and full payment timelines inside every report.
 - The paywall is presented in-app. With a RevenueCat public key configured (a Test Store key is enough for sandbox demos), purchase and restore run live; without one, the screen shows an honest preview state and the rest of the app is unaffected.
 
 ## How it is built
