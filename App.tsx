@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Platform, Pressable, SafeAreaView, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
+import * as FileSystem from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -140,18 +142,51 @@ export default function App() {
     }));
     setMessage(count > 0 ? `${count} ${count === 1 ? 'record' : 'records'} settled and locked for ${check.client}.` : 'Nothing left to settle here.');
   }
-  async function exportMarkup(markup: string) {
+  async function exportCsv() {
     try {
       if (Platform.OS === 'web') {
+        const blob = new Blob([toCsv(shifts)], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = 'proofpocket.csv'; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        setMessage('CSV downloaded.');
+        return;
+      }
+      const stamp = new Date().toISOString().slice(0, 10);
+      const uri = `${FileSystem.cacheDirectory}proofpocket-${stamp}.csv`;
+      await FileSystem.writeAsStringAsync(uri, toCsv(shifts), { encoding: FileSystem.EncodingType.UTF8 });
+      await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: 'Share pay record CSV', UTI: 'public.comma-separated-values-text' });
+      setMessage('Review the CSV before sharing it.');
+    } catch { setMessage('The CSV could not be shared.'); }
+  }
+
+  async function exportMarkup(markup: string) {
+    if (Platform.OS === 'web') {
+      try {
         const url = URL.createObjectURL(new Blob([markup], { type: 'text/html' }));
         window.open(url, '_blank', 'noopener,noreferrer');
         setTimeout(() => URL.revokeObjectURL(url), 60000);
-      } else {
-        const result = await Print.printToFileAsync({ html: markup });
-        await Sharing.shareAsync(result.uri, { mimeType: 'application/pdf', dialogTitle: 'Share pay record' });
-      }
+        setMessage('Review the packet before sharing it.');
+      } catch { setMessage('The packet could not be opened in this browser.'); }
+      return;
+    }
+    // Try to create a PDF file and share it. If the native printer module
+    // cannot write a file (e.g. Expo Go sandbox), fall back to the system
+    // print dialog which works in all environments.
+    try {
+      const result = await Print.printToFileAsync({ html: markup });
+      await Sharing.shareAsync(result.uri, { mimeType: 'application/pdf', dialogTitle: 'Share pay record' });
       setMessage('Review the packet before sharing it.');
-    } catch { setMessage('The packet could not be created. Try CSV export.'); }
+    } catch (fileErr) {
+      try {
+        await Print.printAsync({ html: markup });
+        setMessage('Review the packet before sharing it.');
+      } catch (printErr) {
+        const reason = printErr instanceof Error ? printErr.message : String(printErr);
+        setMessage(`Could not open the printer: ${reason}`);
+      }
+    }
   }
   function exportPacket(name: string) {
     if (!plus) { setMessage('PDF evidence packets are part of Plus. Your CSV export stays free.'); setTab('plus'); return; }
@@ -167,8 +202,19 @@ export default function App() {
     else Alert.alert('Remove shift?', 'This removes its payment record too.', [{ text: 'Keep shift', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: remove }]);
   }
   async function purchase(restore = false, packageIdentifier?: string) {
-    try { const nowActive = restore ? await restorePlus() : await buyPlus(packageIdentifier); setPlus(nowActive); setMessage(nowActive ? 'Plus is active. Enjoy the full reports.' : 'No active Plus purchase was found.'); }
-    catch (e) { setMessage(e instanceof Error ? e.message : 'The store is unavailable.'); }
+    try {
+      const nowActive = restore ? await restorePlus() : await buyPlus(packageIdentifier);
+      setPlus(nowActive);
+      setMessage(nowActive ? 'Plus is active. Enjoy the full reports.' : 'No active Plus purchase was found.');
+    } catch (e: any) {
+      // RevenueCat throws a plain object (not an Error) with userCancelled = true
+      // when the user dismisses the sheet or a sandbox purchase is declined.
+      if (e?.userCancelled === true || e?.code === 'PURCHASE_CANCELLED') return;
+      // Extract message from whatever shape RevenueCat throws (plain object or Error)
+      const msg = typeof e?.message === 'string' ? e.message : typeof e === 'string' ? e : '';
+      const clean = msg.replace(/^RCPurchasesErrorCode\s*\d*:?\s*/i, '').trim();
+      setMessage(clean || 'The purchase could not be completed. Try again.');
+    }
   }
   function loadDemo() {
     if (hasDemo) { setMessage('Demo data is already in your log.'); return; }
@@ -214,7 +260,7 @@ export default function App() {
 
   const progressPct = `${Math.round(monthRatio * 100)}%`;
 
-  return <SafeAreaView style={s.screen}><StatusBar style="dark" />
+  return <SafeAreaProvider><SafeAreaView style={s.screen} edges={['top', 'left', 'right']}><StatusBar style="dark" />
     <View style={s.appBar}>
       <View style={s.mark}><MaterialIcons name="receipt-long" size={19} color={color.onPrimary} /></View>
       <Text style={s.brand}>ProofPocket</Text>
@@ -258,7 +304,7 @@ export default function App() {
         </View>
         <View style={s.sectionHead}>
           <Text style={s.title}>Your records</Text>
-          {shifts.length > 0 && <Pressable onPress={() => Share.share({ message: toCsv(shifts), title: 'ProofPocket pay record' }).catch(() => setMessage('Sharing is unavailable.'))} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}>
+          {shifts.length > 0 && <Pressable onPress={exportCsv} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}>
             <MaterialIcons name="share" size={16} color={color.primary} /><Text style={s.textBtnText}>Share CSV</Text>
           </Pressable>}
         </View>
@@ -544,7 +590,7 @@ export default function App() {
     <View style={s.nav}>
       {([['home', 'Overview', 'home'], ['timer', 'Timer', 'timer'], ['check', 'Check', 'fact-check'], ['packet', 'Packet', 'receipt-long'], ['plus', 'Plus', 'workspace-premium']] as Array<[Tab, string, string]>).map(([key, label, icon]) => {
         const selected = tab === key || (key === 'home' && tab === 'add');
-        return <Pressable key={key} onPress={() => go(key)} android_ripple={ripple} style={({ pressed }) => [s.navItem, pressed && s.pressed]}>
+        return <Pressable key={key} onPress={() => go(key)} style={({ pressed }) => [s.navItem, pressed && s.navItemPressed]}>
           <View style={[s.navPill, selected && s.navPillActive]}>
             <MaterialIcons name={icon as never} size={22} color={selected ? color.onPrimaryContainer : color.onSurfaceVariant} />
             {key === 'timer' && active && <View style={s.navBadge} />}
@@ -553,7 +599,7 @@ export default function App() {
         </Pressable>;
       })}
     </View>
-  </SafeAreaView>;
+  </SafeAreaView></SafeAreaProvider>;
 }
 
 function Field(props: { label: string; value: string; onChangeText: (v: string) => void; placeholder: string; numeric?: boolean }) {
@@ -751,6 +797,7 @@ const s = StyleSheet.create({
 
   nav: { flexDirection: 'row', backgroundColor: color.surface, borderTopWidth: 1, borderTopColor: color.outline, paddingTop: spacing[2], paddingBottom: spacing[2] },
   navItem: { flex: 1, alignItems: 'center', paddingVertical: spacing[1] },
+  navItemPressed: { opacity: 0.65 },
   navPill: { width: 56, height: 32, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
   navPillActive: { backgroundColor: color.primaryContainer },
   navBadge: { position: 'absolute', top: 6, right: 12, width: 8, height: 8, borderRadius: 4, backgroundColor: color.error, borderWidth: 1.5, borderColor: color.surface },

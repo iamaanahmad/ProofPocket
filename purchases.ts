@@ -11,6 +11,8 @@ try { Purchases = require('react-native-purchases').default ?? null; } catch { P
 const apiKey = process.env.EXPO_PUBLIC_REVENUECAT_API_KEY;
 export const purchasesConfigured = Boolean(apiKey) && Platform.OS !== 'web' && Boolean(Purchases);
 
+let _configured = false;
+
 // The entitlement configured in the RevenueCat dashboard for this project.
 export const ENTITLEMENT_ID = 'proofpocket';
 
@@ -20,7 +22,9 @@ function hasPlus(info: any) {
 
 export async function configurePurchases() {
   if (!purchasesConfigured || !apiKey) return false;
+  if (_configured) return true;
   Purchases.configure({ apiKey });
+  _configured = true;
   return true;
 }
 
