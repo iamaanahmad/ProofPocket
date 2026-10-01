@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Alert, Platform, SafeAreaView, ScrollView, Share, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, Platform, Pressable, SafeAreaView, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import { MaterialIcons } from '@expo/vector-icons';
 import { addPayment, amountOwed, demoShifts, disputePacket, formatDuration, isLocked, makeShift, monthlyPacket, monthlySummary, msToHours, paid, parseShifts, payoutCheck, promised, setSettled, Shift, ShiftUnit, toCsv, totals, unitLabel } from './ledger';
 import { buyPlus, configurePurchases, getPlusPackages, getPlusStatus, PlusPackage, purchasesConfigured, restorePlus } from './purchases';
+import { color, elevation, radius, spacing, type } from './theme';
 
 const KEY = 'proofpocket.shifts.v1';
 const ACTIVE_KEY = 'proofpocket.active.v1';
@@ -15,6 +17,7 @@ const monthName = (key: string) => { const [y, m] = key.split('-').map(Number); 
 const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const currentMonth = () => localToday().slice(0, 7);
 const fmtUnits = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2).replace(/0$/, '').replace(/\.$/, ''));
+const initials = (name: string) => name.split(/\s+/).map(w => w[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || '?';
 const UNITS: Array<{ key: ShiftUnit; label: string; work: string }> = [
   { key: 'hour', label: 'Per hour', work: 'HOURS WORKED' },
   { key: 'task', label: 'Per task', work: 'TASKS COMPLETED' },
@@ -23,6 +26,8 @@ const UNITS: Array<{ key: ShiftUnit; label: string; work: string }> = [
 
 type Tab = 'home' | 'timer' | 'add' | 'check' | 'packet' | 'plus';
 type ActiveShift = { client: string; rate: string; unit: ShiftUnit; startedAt: string; accumulatedMs: number; runningSince: string | null; breaks: number; tasks: number; note: string };
+
+const ripple = { color: 'rgba(10, 51, 46, 0.10)', borderless: false } as const;
 
 export default function App() {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -38,6 +43,7 @@ export default function App() {
   const [plus, setPlus] = useState(false);
   const [plans, setPlans] = useState<PlusPackage[]>([]);
   const [message, setMessage] = useState('');
+  const [selectedPlan, setSelectedPlan] = useState('');
   const [paymentId, setPaymentId] = useState<string | null>(null);
   const [payment, setPayment] = useState('');
   const [paymentDate, setPaymentDate] = useState(localToday());
@@ -52,6 +58,7 @@ export default function App() {
   const [startRate, setStartRate] = useState('');
   const [startUnit, setStartUnit] = useState<ShiftUnit>('hour');
   const [clock, setClock] = useState(Date.now());
+  const snackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const sum = useMemo(() => totals(shifts), [shifts]);
   const months = useMemo(() => monthlySummary(shifts), [shifts]);
@@ -91,6 +98,16 @@ export default function App() {
     const id = setInterval(() => setClock(Date.now()), 1000);
     return () => clearInterval(id);
   }, [timerOn]);
+  useEffect(() => {
+    if (!plans.length) return;
+    setSelectedPlan(current => (current && plans.some(p => p.identifier === current) ? current : (plans.find(p => p.label === 'Monthly') ?? plans[0]).identifier));
+  }, [plans]);
+  useEffect(() => {
+    if (!message) return;
+    if (snackTimer.current) clearTimeout(snackTimer.current);
+    snackTimer.current = setTimeout(() => setMessage(''), 5000);
+    return () => { if (snackTimer.current) clearTimeout(snackTimer.current); };
+  }, [message]);
 
   function save() {
     try {
@@ -150,7 +167,7 @@ export default function App() {
     else Alert.alert('Remove shift?', 'This removes its payment record too.', [{ text: 'Keep shift', style: 'cancel' }, { text: 'Remove', style: 'destructive', onPress: remove }]);
   }
   async function purchase(restore = false, packageIdentifier?: string) {
-    try { const active = restore ? await restorePlus() : await buyPlus(packageIdentifier); setPlus(active); setMessage(active ? 'Plus is active. Enjoy the full reports.' : 'No active Plus purchase was found.'); }
+    try { const nowActive = restore ? await restorePlus() : await buyPlus(packageIdentifier); setPlus(nowActive); setMessage(nowActive ? 'Plus is active. Enjoy the full reports.' : 'No active Plus purchase was found.'); }
     catch (e) { setMessage(e instanceof Error ? e.message : 'The store is unavailable.'); }
   }
   function loadDemo() {
@@ -193,124 +210,550 @@ export default function App() {
     if (Platform.OS === 'web') { if (window.confirm('Discard this timed shift?')) discard(); }
     else Alert.alert('Discard shift?', 'The timer and its counts will be lost.', [{ text: 'Keep timing', style: 'cancel' }, { text: 'Discard', style: 'destructive', onPress: discard }]);
   }
+  function go(next: Tab) { setTab(next); }
+
+  const progressPct = `${Math.round(monthRatio * 100)}%`;
 
   return <SafeAreaView style={s.screen}><StatusBar style="dark" />
-    <View style={s.header}><View style={s.mark}><Text style={s.markText}>P</Text></View><Text style={s.brand}>ProofPocket</Text><Text style={s.headerTag}>PRIVATE PAY LOG</Text></View>
+    <View style={s.appBar}>
+      <View style={s.mark}><MaterialIcons name="receipt-long" size={19} color={color.onPrimary} /></View>
+      <Text style={s.brand}>ProofPocket</Text>
+      <Pressable accessibilityLabel={plus ? 'Plus is active' : 'Open Plus'} onPress={() => go('plus')} android_ripple={ripple} style={({ pressed }) => [s.appBarAction, pressed && s.pressed]}>
+        <MaterialIcons name="workspace-premium" size={23} color={plus ? color.primary : color.onSurfaceVariant} />
+      </Pressable>
+    </View>
     <ScrollView contentContainerStyle={s.body} keyboardShouldPersistTaps="handled">
       {tab === 'home' && <>
-        <Text style={s.kicker}>YOUR WORK, IN WRITING</Text><Text style={s.title}>Know what you're owed.</Text>
+        <Text style={s.overline}>YOUR WORK, IN WRITING</Text>
+        <Text style={s.headline}>Know what you're owed.</Text>
         <Text style={s.lede}>Log each shift and payment. When pay comes in short, you will know exactly how short.</Text>
-        <View style={s.hero}><Text style={s.heroLabel}>{thisMonth.owed > 0 ? `MISSING PAY · ${monthName(thisMonth.month).toUpperCase()}` : `STILL OWED TO YOU`}</Text><Text style={[s.heroAmount, thisMonth.owed > 0 && s.heroMissing]}>{cash(thisMonth.owed > 0 ? thisMonth.owed : sum.owed)}</Text><View style={s.progressTrack}><View style={[s.progressFill, { width: `${Math.round(monthRatio * 100)}%` }]} /></View><Text style={s.heroFoot}>Received {cash(thisMonth.received)} of {cash(thisMonth.promised)} expected in {monthName(thisMonth.month)} · {cash(sum.owed)} still owed overall · Stored only on this device</Text></View>
-        {active && <TouchableOpacity style={s.liveCard} onPress={() => setTab('timer')}><View><Text style={s.liveTitle}>On shift now · {active.client}</Text><Text style={s.muted}>{active.runningSince ? 'Clock running' : 'On a break'} · {active.breaks} {active.breaks === 1 ? 'break' : 'breaks'}{active.tasks > 0 ? ` · ${active.tasks} tasks` : ''}</Text></View><Text style={s.liveClock}>{formatDuration(elapsedMs)}</Text></TouchableOpacity>}
-        <View style={s.quickRow}>
-          <TouchableOpacity style={s.quickButton} onPress={() => setTab('timer')}><Text style={s.quickText}>▶  Start shift</Text></TouchableOpacity>
-          <TouchableOpacity style={s.quickButton} onPress={() => setTab('add')}><Text style={s.quickText}>+  Past shift</Text></TouchableOpacity>
-          <TouchableOpacity style={s.quickButton} onPress={() => setTab('check')}><Text style={s.quickText}>✓  Payout check</Text></TouchableOpacity>
+        <View style={s.hero}>
+          <View style={s.heroTop}>
+            <Text style={s.heroLabel}>{monthName(thisMonth.month).toUpperCase()}</Text>
+            {thisMonth.owed > 0
+              ? <View style={s.stateChipError}><MaterialIcons name="error-outline" size={14} color={color.errorOnDark} /><Text style={s.stateChipErrorText}>Missing pay</Text></View>
+              : <View style={s.stateChipOk}><MaterialIcons name="verified" size={14} color={color.onPrimaryContainer} /><Text style={s.stateChipOkText}>{thisMonth.count > 0 ? 'All paid' : 'On track'}</Text></View>}
+          </View>
+          <Text style={[s.heroAmount, thisMonth.owed > 0 && s.heroAmountMissing]}>{cash(thisMonth.owed > 0 ? thisMonth.owed : sum.owed)}</Text>
+          <Text style={s.heroCaption}>{thisMonth.owed > 0 ? `not yet paid for ${monthName(thisMonth.month)}` : 'still owed to you, all time'}</Text>
+          <View style={s.progressTrack}><View style={[s.progressFill, { width: progressPct as `${number}%` }]} /></View>
+          <Text style={s.heroFoot}>Received {cash(thisMonth.received)} of {cash(thisMonth.promised)} expected this month. {cash(sum.owed)} still owed overall.</Text>
+          <View style={s.heroMeta}><MaterialIcons name="lock" size={13} color={color.onSurfaceDarkMuted} /><Text style={s.heroMetaText}>Stored only on this device. No account, no server.</Text></View>
         </View>
-        <View style={s.section}><Text style={s.sectionTitle}>Your records</Text>{shifts.length > 0 && <TouchableOpacity onPress={() => Share.share({ message: toCsv(shifts), title: 'ProofPocket pay record' }).catch(() => setMessage('Sharing is unavailable.'))}><Text style={s.link}>Share CSV</Text></TouchableOpacity>}</View>
-        {shifts.length === 0 ? <View style={s.empty}><Text style={s.emptyTitle}>Every fair payment starts with a record.</Text><Text style={s.emptyBody}>Start the timer when work begins, or record a past shift. New here? Load the demo month and see a payout check in seconds.</Text><View style={s.quickRow}><TouchableOpacity style={s.quickButton} onPress={() => setTab('timer')}><Text style={s.quickText}>▶  Start shift</Text></TouchableOpacity><TouchableOpacity style={s.quickButton} onPress={loadDemo}><Text style={s.quickText}>Load demo data</Text></TouchableOpacity></View></View> : shifts.map(shift => {
+        {active && <Pressable onPress={() => go('timer')} android_ripple={ripple} style={({ pressed }) => [s.liveCard, pressed && s.pressed]}>
+          <View style={s.liveIcon}><MaterialIcons name="timer" size={21} color={color.onPrimaryContainer} /></View>
+          <View style={s.liveText}>
+            <Text style={s.titleSm}>{active.client}</Text>
+            <Text style={s.supporting}>{active.runningSince ? 'Clock running' : 'On a break'} · {active.breaks} {active.breaks === 1 ? 'break' : 'breaks'}{active.tasks > 0 ? ` · ${active.tasks} tasks` : ''}</Text>
+          </View>
+          <Text style={s.liveClock}>{formatDuration(elapsedMs)}</Text>
+        </Pressable>}
+        <View style={s.quickRow}>
+          <Pressable onPress={() => go('timer')} android_ripple={ripple} style={({ pressed }) => [s.tonalBtn, pressed && s.pressed]}>
+            <MaterialIcons name="play-arrow" size={19} color={color.onPrimaryContainer} /><Text style={s.tonalBtnText}>Start shift</Text>
+          </Pressable>
+          <Pressable onPress={() => go('check')} android_ripple={ripple} style={({ pressed }) => [s.tonalBtn, pressed && s.pressed]}>
+            <MaterialIcons name="fact-check" size={19} color={color.onPrimaryContainer} /><Text style={s.tonalBtnText}>Payout check</Text>
+          </Pressable>
+        </View>
+        <View style={s.sectionHead}>
+          <Text style={s.title}>Your records</Text>
+          {shifts.length > 0 && <Pressable onPress={() => Share.share({ message: toCsv(shifts), title: 'ProofPocket pay record' }).catch(() => setMessage('Sharing is unavailable.'))} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}>
+            <MaterialIcons name="share" size={16} color={color.primary} /><Text style={s.textBtnText}>Share CSV</Text>
+          </Pressable>}
+        </View>
+        {shifts.length === 0 ? <View style={s.empty}>
+          <View style={s.emptyIcon}><MaterialIcons name="receipt-long" size={30} color={color.primary} /></View>
+          <Text style={s.emptyTitle}>Every fair payment starts with a record.</Text>
+          <Text style={s.emptyBody}>Start the timer when work begins, or record a past shift. New here? Load the demo month and see a payout check in seconds.</Text>
+          <Pressable onPress={loadDemo} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, s.emptyBtn, pressed && s.pressed]}>
+            <MaterialIcons name="play-arrow" size={19} color={color.onPrimary} /><Text style={s.filledBtnText}>Load demo data</Text>
+          </Pressable>
+        </View> : shifts.map(shift => {
           const owed = amountOwed(shift);
           const locked = isLocked(shift);
-          return <View key={shift.id} style={s.record}><View style={s.row}><Text style={s.recordTitle}>{shift.client}</Text><Text style={s.muted}>{shift.date}</Text></View><Text style={s.muted}>{fmtUnits(shift.units)} {unitLabel(shift.unit, shift.units)} × {cash(shift.rate)} · Promised {cash(promised(shift))}</Text><Text style={s.muted}>Received {cash(paid(shift))}</Text>{shift.settled ? <Text style={s.settledText}>🔒 Settled · locked</Text> : owed > 0 ? <Text style={s.missingText}>{cash(owed)} outstanding</Text> : <Text style={s.paidText}>Paid in full{locked ? ' · locked' : ''}</Text>}{Boolean(shift.note) && <Text style={s.muted}>{shift.note}</Text>}{shift.payments.map(p => <Text key={p.id} style={s.paymentTimeline}>↳ {p.date} · {cash(p.amount)} {p.reference ? '· ' + p.reference : ''}</Text>)}<View style={s.recordActions}>{!locked && <><TouchableOpacity onPress={() => { setPaymentId(shift.id); setPayment(''); }}><Text style={s.link}>Add payment</Text></TouchableOpacity><TouchableOpacity onPress={() => toggleSettled(shift)}><Text style={s.link}>Mark settled</Text></TouchableOpacity></>}{shift.settled && <TouchableOpacity onPress={() => toggleSettled(shift)}><Text style={s.link}>Unlock</Text></TouchableOpacity>}<TouchableOpacity onPress={() => removeShift(shift.id)}><Text style={s.remove}>Remove</Text></TouchableOpacity></View>{paymentId === shift.id && !locked && <View style={s.paymentRow}><Field label="PAYMENT DATE" value={paymentDate} onChangeText={setPaymentDate} placeholder="YYYY-MM-DD" /><Field label="AMOUNT RECEIVED (₹)" value={payment} onChangeText={setPayment} placeholder="500" numeric /><Field label="REFERENCE OR METHOD" value={paymentReference} onChangeText={setPaymentReference} placeholder="UPI ID or cash" /><TouchableOpacity style={s.smallButton} onPress={() => savePayment(shift.id)}><Text style={s.buttonText}>Save payment</Text></TouchableOpacity></View>}</View>;
+          return <View key={shift.id} style={s.record}>
+            <View style={s.recordHead}>
+              <View style={s.avatar}><Text style={s.avatarText}>{initials(shift.client)}</Text></View>
+              <View style={s.recordTitles}>
+                <Text style={s.titleSm}>{shift.client}</Text>
+                <Text style={s.supporting}>{shift.date} · {fmtUnits(shift.units)} {unitLabel(shift.unit, shift.units)} × {cash(shift.rate)}</Text>
+              </View>
+              {shift.settled
+                ? <View style={s.statusChip}><MaterialIcons name="lock" size={13} color={color.onSurfaceVariant} /><Text style={s.statusChipText}>Settled</Text></View>
+                : owed > 0
+                  ? <View style={s.statusChipError}><MaterialIcons name="error-outline" size={13} color={color.error} /><Text style={s.statusChipErrorText}>{cash(owed)} due</Text></View>
+                  : <View style={s.statusChip}><MaterialIcons name="check" size={13} color={color.primary} /><Text style={s.statusChipText}>Paid</Text></View>}
+            </View>
+            <View style={s.amountRow}>
+              <Text style={s.amountCell}>Promised <Text style={s.amountStrong}>{cash(promised(shift))}</Text></Text>
+              <Text style={s.amountCell}>Received <Text style={s.amountStrong}>{cash(paid(shift))}</Text></Text>
+            </View>
+            {Boolean(shift.note) && <Text style={s.note}>{shift.note}</Text>}
+            {shift.payments.length > 0 && <View style={s.timeline}>
+              {shift.payments.map(p => <View key={p.id} style={s.timelineRow}>
+                <MaterialIcons name="payments" size={15} color={color.onSurfaceVariant} />
+                <Text style={s.timelineText}>{p.date} · {cash(p.amount)}{p.reference ? ` · ${p.reference}` : ''}</Text>
+              </View>)}
+            </View>}
+            <View style={s.recordActions}>
+              {!locked && <>
+                <Pressable onPress={() => { setPaymentId(shift.id); setPayment(''); }} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}><Text style={s.textBtnText}>Add payment</Text></Pressable>
+                <Pressable onPress={() => toggleSettled(shift)} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}><Text style={s.textBtnText}>Mark settled</Text></Pressable>
+              </>}
+              {shift.settled && <Pressable onPress={() => toggleSettled(shift)} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}><Text style={s.textBtnText}>Unlock</Text></Pressable>}
+              <Pressable onPress={() => removeShift(shift.id)} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}><Text style={s.textBtnDanger}>Remove</Text></Pressable>
+            </View>
+            {paymentId === shift.id && !locked && <View style={s.paymentForm}>
+              <Field label="PAYMENT DATE" value={paymentDate} onChangeText={setPaymentDate} placeholder="YYYY-MM-DD" />
+              <Field label="AMOUNT RECEIVED (₹)" value={payment} onChangeText={setPayment} placeholder="500" numeric />
+              <Field label="REFERENCE OR METHOD" value={paymentReference} onChangeText={setPaymentReference} placeholder="UPI ID or cash" />
+              <Pressable onPress={() => savePayment(shift.id)} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, pressed && s.pressed]}>
+                <MaterialIcons name="check" size={19} color={color.onPrimary} /><Text style={s.filledBtnText}>Save payment</Text>
+              </Pressable>
+            </View>}
+          </View>;
         })}
       </>}
       {tab === 'timer' && <>
-        <Text style={s.kicker}>LIVE SHIFT TIMER</Text><Text style={s.title}>Start when work starts.</Text>
+        <Text style={s.overline}>LIVE SHIFT TIMER</Text>
+        <Text style={s.headline}>Start when work starts.</Text>
         {!active ? <>
-          <Text style={s.lede}>The clock runs on this screen and keeps counting if you leave the app. End the shift and it lands in your log, ready for a payout check.</Text>
+          <Text style={s.lede}>The clock keeps counting if you leave the app. End the shift and it lands in your log, ready for a payout check.</Text>
           <Field label="WHO ARE YOU WORKING FOR" value={startClient} onChangeText={setStartClient} placeholder="Client or company" />
-          {clients.length > 0 && <View style={s.chipRow}>{clients.map(c => <TouchableOpacity key={c} style={[s.chip, startClient === c && s.chipActive]} onPress={() => setStartClient(c)}><Text style={[s.chipText, startClient === c && s.chipTextActive]}>{c}</Text></TouchableOpacity>)}</View>}
-          <Text style={s.fieldLabel}>PAID BY</Text><UnitPicker value={startUnit} onChange={setStartUnit} />
+          {clients.length > 0 && <View style={s.chipRow}>{clients.map(c => <Chip key={c} label={c} active={startClient === c} onPress={() => setStartClient(c)} />)}</View>}
+          <Text style={s.fieldLabel}>PAID BY</Text>
+          <UnitPicker value={startUnit} onChange={setStartUnit} />
           <Field label={`AGREED RATE PER ${startUnit.toUpperCase()} (₹)`} value={startRate} onChangeText={setStartRate} placeholder={startUnit === 'task' ? '45' : '500'} numeric />
-          <TouchableOpacity style={s.button} onPress={startShift}><Text style={s.buttonText}>▶  Start shift</Text></TouchableOpacity>
-          <Text style={s.fine}>Works offline. Nothing leaves this device.</Text>
+          <Pressable onPress={startShift} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, pressed && s.pressed]}>
+            <MaterialIcons name="play-arrow" size={20} color={color.onPrimary} /><Text style={s.filledBtnText}>Start shift</Text>
+          </Pressable>
+          <Text style={s.fine}>Works fully offline. Nothing leaves this device.</Text>
         </> : <>
-          <Text style={s.lede}>{active.client} · {cash(Number(active.rate) || 0)} per {active.unit}{active.runningSince ? ' · clock running' : ' · on a break'}</Text>
-          <View style={s.timerCard}><Text style={s.timerClock}>{formatDuration(elapsedMs)}</Text><Text style={s.muted}>Started {active.startedAt.slice(0, 10)} · {active.breaks} {active.breaks === 1 ? 'break' : 'breaks'} taken</Text></View>
-          <View style={s.counterRow}><TouchableOpacity style={s.counterButton} onPress={() => setActive({ ...active, tasks: Math.max(0, active.tasks - 1) })}><Text style={s.counterSymbol}>−</Text></TouchableOpacity><View style={s.counterMiddle}><Text style={s.counterValue}>{active.tasks}</Text><Text style={s.muted}>tasks / deliveries</Text></View><TouchableOpacity style={s.counterButton} onPress={() => setActive({ ...active, tasks: active.tasks + 1 })}><Text style={s.counterSymbol}>+</Text></TouchableOpacity></View>
-          <Field label="OPTIONAL NOTE" value={active.note} onChangeText={value => setActive({ ...active, note: value })} placeholder="Zone, order count, anything worth remembering" />
-          <TouchableOpacity style={s.button} onPress={pauseResume}><Text style={s.buttonText}>{active.runningSince ? '⏸  Take a break' : '▶  Back to work'}</Text></TouchableOpacity>
-          <TouchableOpacity style={[s.button, s.endButton]} onPress={endShift}><Text style={s.buttonText}>■  End shift and save</Text></TouchableOpacity>
-          <TouchableOpacity style={s.restore} onPress={discardShift}><Text style={s.remove}>Discard timer</Text></TouchableOpacity>
+          <Text style={s.lede}>{active.client} · {cash(Number(active.rate) || 0)} per {active.unit}</Text>
+          <View style={s.timerCard}>
+            <View style={active.runningSince ? s.stateChipOk : s.stateChipWarn}>
+              <View style={[s.stateDot, { backgroundColor: active.runningSince ? color.primary : '#B97B0F' }]} />
+              <Text style={active.runningSince ? s.stateChipOkText : s.stateChipWarnText}>{active.runningSince ? 'Clock running' : 'On a break'}</Text>
+            </View>
+            <Text style={s.timerClock}>{formatDuration(elapsedMs)}</Text>
+            <Text style={s.timerMeta}>Started {active.startedAt.slice(0, 10)} · {active.breaks} {active.breaks === 1 ? 'break' : 'breaks'} taken</Text>
+          </View>
+          <View style={s.counterRow}>
+            <Pressable accessibilityLabel="One less task" onPress={() => setActive({ ...active, tasks: Math.max(0, active.tasks - 1) })} android_ripple={ripple} style={({ pressed }) => [s.counterBtn, pressed && s.pressed]}>
+              <MaterialIcons name="remove" size={24} color={color.onPrimaryContainer} />
+            </Pressable>
+            <View style={s.counterMiddle}>
+              <Text style={s.counterValue}>{active.tasks}</Text>
+              <Text style={s.supporting}>tasks / deliveries</Text>
+            </View>
+            <Pressable accessibilityLabel="One more task" onPress={() => setActive({ ...active, tasks: active.tasks + 1 })} android_ripple={ripple} style={({ pressed }) => [s.counterBtn, pressed && s.pressed]}>
+              <MaterialIcons name="add" size={24} color={color.onPrimaryContainer} />
+            </Pressable>
+          </View>
+          <Field label="OPTIONAL NOTE" value={active.note} onChangeText={value => setActive({ ...active, note: value })} placeholder="Zone, order count, note" />
+          <Pressable onPress={pauseResume} android_ripple={ripple} style={({ pressed }) => [s.tonalBtnLg, pressed && s.pressed]}>
+            <MaterialIcons name={active.runningSince ? 'pause' : 'play-arrow'} size={20} color={color.onPrimaryContainer} />
+            <Text style={s.tonalBtnText}>{active.runningSince ? 'Take a break' : 'Back to work'}</Text>
+          </Pressable>
+          <Pressable onPress={endShift} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, s.spacedBtn, pressed && s.pressed]}>
+            <MaterialIcons name="stop" size={20} color={color.onPrimary} /><Text style={s.filledBtnText}>End shift and save</Text>
+          </Pressable>
+          <Pressable onPress={discardShift} android_ripple={ripple} style={({ pressed }) => [s.textBtnCenter, pressed && s.pressed]}>
+            <Text style={s.textBtnDanger}>Discard timer</Text>
+          </Pressable>
         </>}
       </>}
-      {tab === 'add' && <><Text style={s.kicker}>NEW RECORD</Text><Text style={s.title}>Record a past shift.</Text><Text style={s.lede}>Write down the terms while they are fresh. Export your records anytime.</Text>
+      {tab === 'add' && <>
+        <Text style={s.overline}>NEW RECORD</Text>
+        <Text style={s.headline}>Record a past shift.</Text>
+        <Text style={s.lede}>Write down the terms while they are fresh. Your records stay on this device and export anytime.</Text>
         <Field label="DATE" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
         <Field label="WHO OWES YOU" value={client} onChangeText={setClient} placeholder="Client or company" />
-        {clients.length > 0 && <View style={s.chipRow}>{clients.map(c => <TouchableOpacity key={c} style={[s.chip, client === c && s.chipActive]} onPress={() => setClient(c)}><Text style={[s.chipText, client === c && s.chipTextActive]}>{c}</Text></TouchableOpacity>)}</View>}
-        <Text style={s.fieldLabel}>PAID BY</Text><UnitPicker value={unit} onChange={setUnit} />
+        {clients.length > 0 && <View style={s.chipRow}>{clients.map(c => <Chip key={c} label={c} active={client === c} onPress={() => setClient(c)} />)}</View>}
+        <Text style={s.fieldLabel}>PAID BY</Text>
+        <UnitPicker value={unit} onChange={setUnit} />
         <Field label={UNITS.find(u => u.key === unit)?.work ?? 'WORK DONE'} value={units} onChangeText={setUnits} placeholder={unit === 'task' ? '240' : '8'} numeric />
         <Field label={`RATE PER ${unit.toUpperCase()} (₹)`} value={rate} onChangeText={setRate} placeholder={unit === 'task' ? '45' : '500'} numeric />
         <Field label="ALREADY RECEIVED (₹)" value={received} onChangeText={setReceived} placeholder="0" numeric />
         <Field label="OPTIONAL NOTE" value={note} onChangeText={setNote} placeholder="Job or payment detail" />
-        <TouchableOpacity style={s.button} onPress={save}><Text style={s.buttonText}>Save shift</Text></TouchableOpacity><Text style={s.fine}>This personal log is not legal proof of a contract.</Text>
+        <Pressable onPress={save} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, pressed && s.pressed]}>
+          <MaterialIcons name="check" size={20} color={color.onPrimary} /><Text style={s.filledBtnText}>Save shift</Text>
+        </Pressable>
+        <Text style={s.fine}>This personal log is not legal proof of a contract.</Text>
       </>}
-      {tab === 'check' && <><Text style={s.kicker}>PAYOUT CHECK</Text><Text style={s.title}>Did they pay it all?</Text><Text style={s.lede}>Pick a client and a month. Your log does the maths they hope you skip.</Text>
-        {clients.length === 0 ? <View style={s.empty}><Text style={s.emptyTitle}>No shifts yet.</Text><Text style={s.emptyBody}>Record work first, then run a check when the money lands. Or load the demo month and try it now.</Text><TouchableOpacity style={[s.quickButton, s.demoButton]} onPress={loadDemo}><Text style={s.quickText}>Load demo data</Text></TouchableOpacity></View> : <>
-          <Text style={s.fieldLabel}>CLIENT</Text><View style={s.chipRow}>{clients.map(c => <TouchableOpacity key={c} style={[s.chip, activeCheckClient === c && s.chipActive]} onPress={() => setCheckClient(c)}><Text style={[s.chipText, activeCheckClient === c && s.chipTextActive]}>{c}</Text></TouchableOpacity>)}</View>
-          <Text style={s.fieldLabel}>MONTH</Text><View style={s.chipRow}>{monthKeys.map(k => <TouchableOpacity key={k} style={[s.chip, activeCheckMonth === k && s.chipActive]} onPress={() => setCheckMonth(k)}><Text style={[s.chipText, activeCheckMonth === k && s.chipTextActive]}>{monthName(k)}</Text></TouchableOpacity>)}</View>
-          {check && (check.count === 0 ? <View style={s.empty}><Text style={s.emptyTitle}>Nothing logged for {check.client} in {monthName(activeCheckMonth)}.</Text><Text style={s.emptyBody}>Try another month, or record the shift first.</Text></View> : check.missing > 0 ? <View style={s.missingCard}><Text style={s.missingLabel}>MISSING PAY</Text><Text style={s.missingAmount}>{cash(check.missing)}</Text><Text style={s.missingBody}>You logged {fmtUnits(check.units)} {unitLabel(check.unit, check.units)} for {check.client} in {monthName(activeCheckMonth)}. Promised {cash(check.promised)}. They paid {cash(check.received)}, which covers only {fmtUnits(check.paidUnitsEquivalent)} of your {unitLabel(check.unit, check.units)}.</Text><View style={s.missingActions}><TouchableOpacity style={s.missingButton} onPress={() => { setPacketClient(check.client); setTab('packet'); }}><Text style={s.missingButtonText}>Prepare evidence packet</Text></TouchableOpacity><TouchableOpacity style={s.missingGhost} onPress={settleCheckSelection}><Text style={s.missingGhostText}>Mark settled anyway</Text></TouchableOpacity></View></View> : <View style={s.okCard}><Text style={s.okTitle}>Fully paid. ✓</Text><Text style={s.okBody}>{check.client} paid all {cash(check.promised)} for {fmtUnits(check.units)} {unitLabel(check.unit, check.units)} in {monthName(activeCheckMonth)}. Your log agrees with their money.</Text></View>)}
+      {tab === 'check' && <>
+        <Text style={s.overline}>PAYOUT CHECK</Text>
+        <Text style={s.headline}>Did they pay it all?</Text>
+        <Text style={s.lede}>Pick a client and a month. Your log does the maths they hope you skip.</Text>
+        {clients.length === 0 ? <View style={s.empty}>
+          <View style={s.emptyIcon}><MaterialIcons name="fact-check" size={30} color={color.primary} /></View>
+          <Text style={s.emptyTitle}>No shifts yet.</Text>
+          <Text style={s.emptyBody}>Record work first, then run a check when the money lands. Or load the demo month and try it now.</Text>
+          <Pressable onPress={loadDemo} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, s.emptyBtn, pressed && s.pressed]}>
+            <MaterialIcons name="play-arrow" size={19} color={color.onPrimary} /><Text style={s.filledBtnText}>Load demo data</Text>
+          </Pressable>
+        </View> : <>
+          <Text style={s.fieldLabel}>CLIENT</Text>
+          <View style={s.chipRow}>{clients.map(c => <Chip key={c} label={c} active={activeCheckClient === c} onPress={() => setCheckClient(c)} />)}</View>
+          <Text style={s.fieldLabel}>MONTH</Text>
+          <View style={s.chipRow}>{monthKeys.map(k => <Chip key={k} label={monthName(k)} active={activeCheckMonth === k} onPress={() => setCheckMonth(k)} />)}</View>
+          {check && (check.count === 0 ? <View style={s.empty}>
+            <View style={s.emptyIcon}><MaterialIcons name="event-available" size={30} color={color.primary} /></View>
+            <Text style={s.emptyTitle}>Nothing logged for {check.client} in {monthName(activeCheckMonth)}.</Text>
+            <Text style={s.emptyBody}>Try another month, or record the shift first.</Text>
+          </View> : check.missing > 0 ? <View style={s.missingCard}>
+            <View style={s.missingTop}>
+              <MaterialIcons name="error-outline" size={20} color={color.errorOnDark} />
+              <Text style={s.missingLabel}>MISSING PAY</Text>
+            </View>
+            <Text style={s.missingAmount}>{cash(check.missing)}</Text>
+            <Text style={s.missingBody}>You logged {fmtUnits(check.units)} {unitLabel(check.unit, check.units)} for {check.client} in {monthName(activeCheckMonth)}. They promised {cash(check.promised)} and paid {cash(check.received)}, which covers only {fmtUnits(check.paidUnitsEquivalent)} of your {unitLabel(check.unit, check.units)}.</Text>
+            <Pressable onPress={() => { setPacketClient(check.client); go('packet'); }} android_ripple={ripple} style={({ pressed }) => [s.missingBtn, pressed && s.pressed]}>
+              <MaterialIcons name="picture-as-pdf" size={19} color={color.error} /><Text style={s.missingBtnText}>Prepare evidence packet</Text>
+            </Pressable>
+            <Pressable onPress={settleCheckSelection} android_ripple={ripple} style={({ pressed }) => [s.missingGhost, pressed && s.pressed]}>
+              <Text style={s.missingGhostText}>Mark settled anyway</Text>
+            </Pressable>
+          </View> : <View style={s.okCard}>
+            <View style={s.okIcon}><MaterialIcons name="verified" size={26} color={color.primary} /></View>
+            <View style={s.okText}>
+              <Text style={s.title}>Fully paid.</Text>
+              <Text style={s.okBody}>{check.client} paid all {cash(check.promised)} for {fmtUnits(check.units)} {unitLabel(check.unit, check.units)} in {monthName(activeCheckMonth)}. Your log agrees with their money.</Text>
+            </View>
+          </View>)}
         </>}
       </>}
-      {tab === 'packet' && <><Text style={s.kicker}>EVIDENCE PACKET</Text><Text style={s.title}>Make your case clear.</Text><Text style={s.lede}>Choose a client to see the exact gap. Export a dated summary to review and share.</Text>
-        {clients.length === 0 ? <View style={s.empty}><Text style={s.emptyTitle}>No shifts yet.</Text><Text style={s.emptyBody}>Add a shift first. Your packet will collect its terms, payments, and notes.</Text></View> : clients.map(name => {
+      {tab === 'packet' && <>
+        <Text style={s.overline}>EVIDENCE PACKET</Text>
+        <Text style={s.headline}>Make your case clear.</Text>
+        <Text style={s.lede}>Choose a client to see the exact gap, then export a dated summary to review and share.</Text>
+        {clients.length === 0 ? <View style={s.empty}>
+          <View style={s.emptyIcon}><MaterialIcons name="receipt-long" size={30} color={color.primary} /></View>
+          <Text style={s.emptyTitle}>No shifts yet.</Text>
+          <Text style={s.emptyBody}>Add a shift first. Your packet will collect its terms, payments and notes.</Text>
+        </View> : clients.map(name => {
           const group = shifts.filter(item => item.client === name);
           const itemTotals = totals(group);
-          return <TouchableOpacity key={name} style={[s.packetCard, packetClient === name && s.packetSelected]} onPress={() => setPacketClient(name)}><Text style={s.recordTitle}>{name}</Text><Text style={s.muted}>{group.length} {group.length === 1 ? 'shift' : 'shifts'} · {cash(itemTotals.promised)} promised · {cash(itemTotals.received)} received</Text>{itemTotals.owed > 0 ? <Text style={s.packetMissing}>{cash(itemTotals.owed)} missing</Text> : <Text style={s.packetPaid}>Paid in full</Text>}</TouchableOpacity>;
+          const selected = packetClient === name;
+          return <Pressable key={name} onPress={() => setPacketClient(name)} android_ripple={ripple} style={({ pressed }) => [s.packetCard, selected && s.packetSelected, pressed && s.pressed]}>
+            <View style={s.recordHead}>
+              <View style={s.avatar}><Text style={s.avatarText}>{initials(name)}</Text></View>
+              <View style={s.recordTitles}>
+                <Text style={s.titleSm}>{name}</Text>
+                <Text style={s.supporting}>{group.length} {group.length === 1 ? 'shift' : 'shifts'} · {cash(itemTotals.promised)} promised · {cash(itemTotals.received)} received</Text>
+              </View>
+              <MaterialIcons name={selected ? 'radio-button-checked' : 'radio-button-unchecked'} size={22} color={selected ? color.primary : color.onSurfaceFaint} />
+            </View>
+            {itemTotals.owed > 0
+              ? <Text style={s.packetMissing}>{cash(itemTotals.owed)} missing</Text>
+              : <Text style={s.packetPaid}>Paid in full</Text>}
+          </Pressable>;
         })}
-        {Boolean(packetClient && clients.includes(packetClient)) && <TouchableOpacity style={s.button} onPress={() => exportPacket(packetClient)}><Text style={s.buttonText}>Prepare {packetClient} packet (PDF)</Text></TouchableOpacity>}
+        {Boolean(packetClient && clients.includes(packetClient)) && <Pressable onPress={() => exportPacket(packetClient)} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, s.spacedBtn, pressed && s.pressed]}>
+          <MaterialIcons name="picture-as-pdf" size={20} color={color.onPrimary} /><Text style={s.filledBtnText}>Prepare {packetClient} packet (PDF)</Text>
+        </Pressable>}
         <Text style={s.fine}>PDF packets are part of Plus. Your CSV export from Overview always stays free. This is your personal record; keep source messages or receipts separately.</Text>
-        {months.length > 0 && <View style={s.monthSection}><Text style={s.sectionTitle}>Monthly view</Text>{months.map(item => <View key={item.month} style={s.monthRow}><Text style={s.recordTitle}>{monthName(item.month)}</Text><Text style={s.muted}>{item.count} {item.count === 1 ? 'shift' : 'shifts'} · {cash(item.promised)} promised · {cash(item.received)} received</Text>{item.owed > 0 && <Text style={s.missingText}>{cash(item.owed)} missing</Text>}<TouchableOpacity onPress={() => exportMonthly(item.month)}><Text style={s.link}>{plus ? 'Export monthly report (PDF)' : 'Monthly PDF with Plus'}</Text></TouchableOpacity></View>)}</View>}
+        {months.length > 0 && <>
+          <Text style={[s.title, s.monthTitle]}>Monthly view</Text>
+          {months.map(item => <View key={item.month} style={s.monthRow}>
+            <View style={s.recordTitles}>
+              <Text style={s.titleSm}>{monthName(item.month)}</Text>
+              <Text style={s.supporting}>{item.count} {item.count === 1 ? 'shift' : 'shifts'} · {cash(item.promised)} promised · {cash(item.received)} received</Text>
+              {item.owed > 0 && <Text style={s.monthMissing}>{cash(item.owed)} missing</Text>}
+            </View>
+            <Pressable onPress={() => exportMonthly(item.month)} android_ripple={ripple} style={({ pressed }) => [s.textBtn, pressed && s.pressed]}>
+              <MaterialIcons name="picture-as-pdf" size={16} color={color.primary} />
+              <Text style={s.textBtnText}>{plus ? 'Export report' : 'With Plus'}</Text>
+            </Pressable>
+          </View>)}
+        </>}
       </>}
-      {tab === 'plus' && <><Text style={s.kicker}>PROOFPOCKET PLUS</Text><Text style={s.title}>Your log stays free.</Text><Text style={s.lede}>Logging shifts, the timer, payout checks and CSV export never need a subscription. Plus turns your log into polished proof.</Text>
-        <View style={s.hero}><Text style={s.heroLabel}>PLUS {plus ? '· ACTIVE' : ''}</Text><Text style={s.plusTitle}>{plus ? 'Plus is on' : 'Proof, ready to send'}</Text><Text style={s.plusPrice}>{plus ? 'Thank you for supporting ProofPocket.' : plans.length ? `${plans.map(p => `${p.label} ${p.priceString}`).join(' · ')} · billed by your store` : 'Price shown in your store before you confirm'}</Text>
-          <View style={s.benefitList}>
-            <Text style={s.benefit}>✓  One-tap PDF evidence packet for any client</Text>
-            <Text style={s.benefit}>✓  Monthly PDF pay report across every client</Text>
-            <Text style={s.benefit}>✓  Full payment timelines inside every report</Text>
-            <Text style={s.benefit}>✓  Built for gig workers, priced for gig workers</Text>
-          </View></View>
-        {plus ? <View style={s.okCard}><Text style={s.okTitle}>Plus is active on this device.</Text><Text style={s.okBody}>PDF packets and monthly reports are unlocked in the Packet tab.</Text></View> : <>{plans.length > 0 ? plans.map(p => <TouchableOpacity key={p.identifier} style={[s.button, s.planButton]} onPress={() => purchase(false, p.identifier)}><Text style={s.buttonText}>Get Plus · {p.label} · {p.priceString}</Text></TouchableOpacity>) : <TouchableOpacity style={[s.button, !purchasesConfigured && s.disabled]} disabled={!purchasesConfigured} onPress={() => purchase()}><Text style={s.buttonText}>{purchasesConfigured ? 'Get Plus' : 'Store not connected'}</Text></TouchableOpacity>}<TouchableOpacity style={s.restore} onPress={() => purchase(true)}><Text style={s.link}>Restore purchase</Text></TouchableOpacity></>}
-        <Text style={s.fine}>{purchasesConfigured ? 'Subscription is handled by your app store via RevenueCat. Cancel anytime in store settings.' : 'This build has no RevenueCat public key configured, so the store is in preview mode. The ledger, timer and payout check work fully offline either way.'}</Text>
-        <View style={s.monthSection}><Text style={s.sectionTitle}>Try the full flow</Text><Text style={s.muted}>Load a realistic demo month (three clients, a few short payments), run a payout check, then remove it. Your own records are never touched.</Text><View style={s.quickRow}><TouchableOpacity style={s.quickButton} onPress={loadDemo}><Text style={s.quickText}>Load demo data</Text></TouchableOpacity>{hasDemo && <TouchableOpacity style={s.quickButton} onPress={clearDemo}><Text style={s.quickText}>Remove demo data</Text></TouchableOpacity>}</View></View>
+      {tab === 'plus' && <>
+        <Text style={s.overline}>PROOFPOCKET PLUS</Text>
+        <Text style={s.headline}>Your log stays free.</Text>
+        <Text style={s.lede}>Logging, the timer, payout checks and CSV export never need a subscription. Plus turns your log into polished proof.</Text>
+        <View style={s.plusCard}>
+          <View style={s.plusTop}>
+            <View style={s.plusBadge}><MaterialIcons name="workspace-premium" size={22} color={color.surfaceDark} /></View>
+            {plus
+              ? <View style={s.stateChipOk}><MaterialIcons name="verified" size={14} color={color.onPrimaryContainer} /><Text style={s.stateChipOkText}>Active</Text></View>
+              : <View style={s.plusChip}><Text style={s.plusChipText}>Optional upgrade</Text></View>}
+          </View>
+          <Text style={s.plusTitle}>{plus ? 'Plus is on' : 'Proof, ready to send'}</Text>
+          <Text style={s.plusPrice}>{plus ? 'Thank you for supporting ProofPocket.' : 'One-tap PDF evidence packets and monthly pay reports, priced for gig workers.'}</Text>
+          <View style={s.benefits}>
+            {['One-tap PDF evidence packet for any client', 'Monthly PDF pay report across every client', 'Full payment timelines inside every report', 'New Plus tools for workers as they land'].map(b => <View key={b} style={s.benefitRow}>
+              <MaterialIcons name="check" size={18} color={color.primaryContainer} /><Text style={s.benefit}>{b}</Text>
+            </View>)}
+          </View>
+        </View>
+        {plus ? <View style={s.okCard}>
+          <View style={s.okIcon}><MaterialIcons name="verified" size={26} color={color.primary} /></View>
+          <View style={s.okText}>
+            <Text style={s.title}>Plus is active on this device.</Text>
+            <Text style={s.okBody}>PDF packets and monthly reports are unlocked in the Packet tab.</Text>
+          </View>
+        </View> : <>
+          {plans.length > 0 ? <>
+            <Text style={s.fieldLabel}>CHOOSE YOUR PLAN</Text>
+            {plans.map(p => {
+              const chosen = selectedPlan === p.identifier;
+              return <Pressable key={p.identifier} onPress={() => setSelectedPlan(p.identifier)} android_ripple={ripple} style={({ pressed }) => [s.planCard, chosen && s.planChosen, pressed && s.pressed]}>
+                <MaterialIcons name={chosen ? 'radio-button-checked' : 'radio-button-unchecked'} size={23} color={chosen ? color.primary : color.onSurfaceFaint} />
+                <View style={s.recordTitles}>
+                  <Text style={s.titleSm}>{p.label}</Text>
+                  <Text style={s.supporting}>{p.label === 'Lifetime' ? 'One payment, yours forever' : p.label === 'Yearly' ? 'Best value for regular work' : 'Flexible, cancel anytime'}</Text>
+                </View>
+                <Text style={s.planPrice}>{p.priceString}</Text>
+              </Pressable>;
+            })}
+            <Pressable onPress={() => purchase(false, selectedPlan || undefined)} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, s.spacedBtn, pressed && s.pressed]}>
+              <MaterialIcons name="workspace-premium" size={20} color={color.onPrimary} />
+              <Text style={s.filledBtnText}>Get {plans.find(p => p.identifier === selectedPlan)?.label ?? 'Plus'}{plans.find(p => p.identifier === selectedPlan) ? ` · ${plans.find(p => p.identifier === selectedPlan)?.priceString}` : ''}</Text>
+            </Pressable>
+          </> : <Pressable disabled={!purchasesConfigured} onPress={() => purchase()} android_ripple={ripple} style={({ pressed }) => [s.filledBtn, !purchasesConfigured && s.disabledBtn, pressed && s.pressed]}>
+            <MaterialIcons name="workspace-premium" size={20} color={color.onPrimary} /><Text style={s.filledBtnText}>{purchasesConfigured ? 'Get Plus' : 'Store not connected'}</Text>
+          </Pressable>}
+          <Pressable onPress={() => purchase(true)} android_ripple={ripple} style={({ pressed }) => [s.textBtnCenter, pressed && s.pressed]}>
+            <MaterialIcons name="restart-alt" size={17} color={color.primary} /><Text style={s.textBtnText}>Restore purchase</Text>
+          </Pressable>
+        </>}
+        <Text style={s.fine}>{purchasesConfigured ? 'Billing is handled by your app store via RevenueCat. Cancel anytime in store settings.' : 'This build has no RevenueCat public key configured, so the store is in preview mode. The ledger, timer and payout check work fully offline either way.'}</Text>
+        <Text style={[s.title, s.monthTitle]}>Try the full flow</Text>
+        <Text style={s.supportingBlock}>Load a realistic demo month (three clients, a few short payments), run a payout check, then remove it. Your own records are never touched.</Text>
+        <View style={s.quickRow}>
+          <Pressable onPress={loadDemo} android_ripple={ripple} style={({ pressed }) => [s.tonalBtn, pressed && s.pressed]}>
+            <MaterialIcons name="play-arrow" size={19} color={color.onPrimaryContainer} /><Text style={s.tonalBtnText}>Load demo data</Text>
+          </Pressable>
+          {hasDemo && <Pressable onPress={clearDemo} android_ripple={ripple} style={({ pressed }) => [s.tonalBtn, pressed && s.pressed]}>
+            <MaterialIcons name="delete-outline" size={19} color={color.onPrimaryContainer} /><Text style={s.tonalBtnText}>Remove demo data</Text>
+          </Pressable>}
+        </View>
       </>}
-      {Boolean(message) && <Text accessibilityRole="alert" style={s.notice}>{message}</Text>}
     </ScrollView>
-    <View style={s.nav}>{([['home', 'Overview'], ['timer', 'Timer'], ['check', 'Check'], ['packet', 'Packet'], ['plus', 'Plus']] as Array<[Tab, string]>).map(([key, label]) => <TouchableOpacity key={key} style={s.navItem} onPress={() => { setMessage(''); setTab(key); }}><Text style={[s.navText, tab === key && s.navActive]}>{label}</Text></TouchableOpacity>)}</View>
+    {tab === 'home' && <Pressable accessibilityLabel="Record a past shift" onPress={() => go('add')} android_ripple={{ color: 'rgba(255,255,255,0.25)', borderless: false }} style={({ pressed }) => [s.fab, pressed && s.fabPressed]}>
+      <MaterialIcons name="add" size={26} color={color.onPrimary} />
+    </Pressable>}
+    {Boolean(message) && <View style={s.snackbar}>
+      <Text style={s.snackbarText}>{message}</Text>
+      <Pressable accessibilityLabel="Dismiss" onPress={() => setMessage('')} hitSlop={8} style={s.snackClose}>
+        <MaterialIcons name="close" size={18} color={color.onSurfaceDarkMuted} />
+      </Pressable>
+    </View>}
+    <View style={s.nav}>
+      {([['home', 'Overview', 'home'], ['timer', 'Timer', 'timer'], ['check', 'Check', 'fact-check'], ['packet', 'Packet', 'receipt-long'], ['plus', 'Plus', 'workspace-premium']] as Array<[Tab, string, string]>).map(([key, label, icon]) => {
+        const selected = tab === key || (key === 'home' && tab === 'add');
+        return <Pressable key={key} onPress={() => go(key)} android_ripple={ripple} style={({ pressed }) => [s.navItem, pressed && s.pressed]}>
+          <View style={[s.navPill, selected && s.navPillActive]}>
+            <MaterialIcons name={icon as never} size={22} color={selected ? color.onPrimaryContainer : color.onSurfaceVariant} />
+            {key === 'timer' && active && <View style={s.navBadge} />}
+          </View>
+          <Text style={[s.navLabel, selected && s.navLabelActive]}>{label}</Text>
+        </Pressable>;
+      })}
+    </View>
   </SafeAreaView>;
 }
 
 function Field(props: { label: string; value: string; onChangeText: (v: string) => void; placeholder: string; numeric?: boolean }) {
-  return <View style={s.field}><Text style={s.fieldLabel}>{props.label}</Text><TextInput style={s.input} value={props.value} onChangeText={props.onChangeText} placeholder={props.placeholder} placeholderTextColor="#829398" keyboardType={props.numeric ? 'decimal-pad' : 'default'} /></View>;
+  const [focused, setFocused] = useState(false);
+  return <View style={s.field}>
+    <Text style={s.fieldLabel}>{props.label}</Text>
+    <TextInput
+      style={[s.input, focused && s.inputFocused]}
+      value={props.value}
+      onChangeText={props.onChangeText}
+      placeholder={props.placeholder}
+      placeholderTextColor={color.onSurfaceFaint}
+      keyboardType={props.numeric ? 'decimal-pad' : 'default'}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+    />
+  </View>;
+}
+
+function Chip(props: { label: string; active: boolean; onPress: () => void }) {
+  return <Pressable onPress={props.onPress} android_ripple={ripple} style={({ pressed }) => [s.chip, props.active && s.chipActive, pressed && s.pressed]}>
+    {props.active && <MaterialIcons name="check" size={15} color={color.onPrimaryContainer} />}
+    <Text style={[s.chipText, props.active && s.chipTextActive]}>{props.label}</Text>
+  </Pressable>;
 }
 
 function UnitPicker(props: { value: ShiftUnit; onChange: (u: ShiftUnit) => void }) {
-  return <View style={s.segRow}>{UNITS.map(u => <TouchableOpacity key={u.key} style={[s.seg, props.value === u.key && s.segActive]} onPress={() => props.onChange(u.key)}><Text style={[s.segText, props.value === u.key && s.segTextActive]}>{u.label}</Text></TouchableOpacity>)}</View>;
+  return <View style={s.segmented}>
+    {UNITS.map((u, i) => {
+      const selected = props.value === u.key;
+      return <Pressable key={u.key} onPress={() => props.onChange(u.key)} android_ripple={ripple} style={({ pressed }) => [s.seg, i > 0 && s.segDivider, selected && s.segActive, pressed && s.pressed]}>
+        {selected && <MaterialIcons name="check" size={15} color={color.onPrimaryContainer} />}
+        <Text style={[s.segText, selected && s.segTextActive]}>{u.label}</Text>
+      </Pressable>;
+    })}
+  </View>;
 }
 
+
 const s = StyleSheet.create({
-  insight: { paddingVertical: 18, paddingHorizontal: 4, borderBottomWidth: 1, borderColor: '#DCE7E2', marginTop: 16 },
-  insightTitle: { fontSize: 15, fontWeight: '800', color: '#172C38' },
-  insightBody: { fontSize: 13, lineHeight: 20, marginTop: 5, color: '#526973' },
-  recordActions: { flexDirection: 'row', gap: 24, marginTop: 15, paddingTop: 13, borderTopWidth: 1, borderColor: '#E1EAE5' },
-  remove: { color: '#9B4B45', fontSize: 13, fontWeight: '700' },
-  paymentRow: { marginTop: 12, gap: 8 },
-  paymentInput: { flex: 1 },
-  paymentTimeline: { color: '#526973', marginTop: 8, fontSize: 12 },
-  smallButton: { backgroundColor: '#086C65', borderRadius: 10, paddingVertical: 13, alignItems: 'center', minWidth: 84 },
-  packetCard: { backgroundColor: 'white', borderWidth: 1, borderColor: '#DCE7E2', padding: 18, borderRadius: 15, marginBottom: 10 },
-  packetSelected: { borderColor: '#086C65', borderWidth: 2 },
-  packetAmount: { color: '#086C65', fontSize: 20, fontWeight: '800', marginTop: 10 },
-  packetMissing: { color: '#B3261E', fontSize: 20, fontWeight: '800', marginTop: 10 },
-  packetPaid: { color: '#086C65', fontSize: 20, fontWeight: '800', marginTop: 10 },
-  monthSection: { marginTop: 32 },
-  monthRow: { paddingVertical: 14, borderBottomWidth: 1, borderColor: '#DCE7E2' },
-  screen: { flex: 1, backgroundColor: '#F7FAF7' }, header: { paddingHorizontal: 24, paddingTop: 18, paddingBottom: 16, flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderColor: '#E1EAE5' }, mark: { width: 31, height: 31, borderRadius: 8, backgroundColor: '#086C65', alignItems: 'center', justifyContent: 'center', marginRight: 9 }, markText: { color: 'white', fontWeight: '800', fontSize: 19 }, brand: { color: '#172C38', fontSize: 18, fontWeight: '800' }, headerTag: { marginLeft: 'auto', color: '#829398', fontSize: 9, fontWeight: '800', letterSpacing: 1 }, body: { padding: 24, paddingBottom: 50 }, kicker: { color: '#086C65', fontWeight: '800', fontSize: 11, letterSpacing: 1.5, marginBottom: 13 }, title: { color: '#172C38', fontSize: 38, lineHeight: 41, fontWeight: '800', letterSpacing: -1.7 }, lede: { color: '#526973', fontSize: 15, lineHeight: 23, marginTop: 12, marginBottom: 27 }, hero: { backgroundColor: '#103D3C', borderRadius: 20, padding: 24, minHeight: 155 }, heroLabel: { color: '#B8E5D1', fontSize: 11, fontWeight: '800', letterSpacing: 1.2 }, heroAmount: { color: 'white', fontSize: 42, fontWeight: '800', marginTop: 10 }, heroMissing: { color: '#FF8A75' }, heroFoot: { color: '#C8DBD6', fontSize: 12, marginTop: 11, lineHeight: 19 }, progressTrack: { height: 6, borderRadius: 3, backgroundColor: '#1E5652', marginTop: 18 }, progressFill: { height: 6, borderRadius: 3, backgroundColor: '#7BDDB8' }, stats: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 23, paddingHorizontal: 4 }, statLabel: { color: '#829398', fontSize: 10, fontWeight: '800', letterSpacing: 1 }, statValue: { color: '#172C38', fontSize: 19, fontWeight: '800', marginTop: 6 }, button: { backgroundColor: '#086C65', borderRadius: 13, alignItems: 'center', paddingVertical: 17, marginTop: 5 }, buttonText: { color: 'white', fontWeight: '800', fontSize: 16 }, planButton: { marginTop: 10 }, endButton: { backgroundColor: '#103D3C', marginTop: 12 }, disabled: { backgroundColor: '#9CB5AD' }, section: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 33, marginBottom: 15 }, sectionTitle: { color: '#172C38', fontSize: 21, fontWeight: '800' }, link: { color: '#086C65', fontWeight: '800', fontSize: 13 }, empty: { backgroundColor: '#EBF3EF', borderRadius: 16, padding: 22 }, emptyTitle: { color: '#172C38', fontSize: 17, lineHeight: 23, fontWeight: '800' }, emptyBody: { color: '#526973', fontSize: 13, lineHeight: 21, marginTop: 8 }, record: { backgroundColor: 'white', borderWidth: 1, borderColor: '#E1EAE5', borderRadius: 15, padding: 17, marginBottom: 10 }, row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 }, recordTitle: { color: '#172C38', fontWeight: '800', fontSize: 16 }, muted: { color: '#526973', fontSize: 12, marginTop: 4 }, owed: { color: '#086C65', fontWeight: '800', fontSize: 13, marginTop: 10 }, missingText: { color: '#B3261E', fontWeight: '800', fontSize: 13, marginTop: 10 }, paidText: { color: '#086C65', fontWeight: '800', fontSize: 13, marginTop: 10 }, settledText: { color: '#526973', fontWeight: '800', fontSize: 13, marginTop: 10 }, field: { marginBottom: 17 }, fieldLabel: { color: '#526973', fontWeight: '800', fontSize: 11, letterSpacing: 1, marginBottom: 8 }, input: { backgroundColor: 'white', borderWidth: 1, borderColor: '#DCE7E2', borderRadius: 12, padding: 15, color: '#172C38', fontSize: 16 }, fine: { color: '#829398', fontSize: 12, lineHeight: 19, marginTop: 19 }, plusTitle: { color: 'white', fontSize: 31, fontWeight: '800', marginTop: 14 }, plusPrice: { color: '#B8E5D1', fontSize: 14, marginTop: 8 }, benefitList: { marginTop: 18, gap: 9 }, benefit: { color: 'white', fontSize: 14, fontWeight: '600' }, restore: { alignItems: 'center', padding: 17 }, notice: { backgroundColor: '#E7F4EE', color: '#086C65', padding: 14, borderRadius: 10, marginTop: 22, lineHeight: 20 }, nav: { flexDirection: 'row', borderTopWidth: 1, borderColor: '#E1EAE5', backgroundColor: 'white', paddingBottom: 9, paddingTop: 13 }, navItem: { flex: 1, alignItems: 'center', paddingVertical: 7 }, navText: { color: '#829398', fontWeight: '700', fontSize: 12 }, navActive: { color: '#086C65' },
-  quickRow: { flexDirection: 'row', gap: 8, marginTop: 16, flexWrap: 'wrap' }, quickButton: { backgroundColor: 'white', borderWidth: 1, borderColor: '#BFD8CF', borderRadius: 999, paddingVertical: 10, paddingHorizontal: 14 }, quickText: { color: '#086C65', fontWeight: '800', fontSize: 13 }, demoButton: { marginTop: 14, alignSelf: 'flex-start' },
-  liveCard: { backgroundColor: 'white', borderWidth: 1, borderColor: '#DCE7E2', borderRadius: 15, padding: 17, marginTop: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }, liveTitle: { color: '#172C38', fontWeight: '800', fontSize: 15 }, liveClock: { color: '#086C65', fontWeight: '800', fontSize: 20 },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 17 }, chip: { borderWidth: 1, borderColor: '#BFD8CF', backgroundColor: 'white', borderRadius: 999, paddingVertical: 8, paddingHorizontal: 13 }, chipActive: { backgroundColor: '#086C65', borderColor: '#086C65' }, chipText: { color: '#086C65', fontWeight: '700', fontSize: 13 }, chipTextActive: { color: 'white' },
-  segRow: { flexDirection: 'row', gap: 8, marginBottom: 17 }, seg: { flex: 1, borderWidth: 1, borderColor: '#BFD8CF', backgroundColor: 'white', borderRadius: 12, paddingVertical: 12, alignItems: 'center' }, segActive: { backgroundColor: '#103D3C', borderColor: '#103D3C' }, segText: { color: '#526973', fontWeight: '800', fontSize: 13 }, segTextActive: { color: 'white' },
-  timerCard: { backgroundColor: '#103D3C', borderRadius: 20, padding: 24, alignItems: 'center' }, timerClock: { color: 'white', fontSize: 52, fontWeight: '800', letterSpacing: 1 }, counterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22, marginVertical: 20 }, counterButton: { width: 52, height: 52, borderRadius: 26, backgroundColor: '#086C65', alignItems: 'center', justifyContent: 'center' }, counterSymbol: { color: 'white', fontSize: 26, fontWeight: '800' }, counterMiddle: { alignItems: 'center', minWidth: 90 }, counterValue: { color: '#172C38', fontSize: 30, fontWeight: '800' },
-  missingCard: { backgroundColor: '#B3261E', borderRadius: 20, padding: 24, marginTop: 6 }, missingLabel: { color: '#FFD9D4', fontSize: 11, fontWeight: '800', letterSpacing: 1.4 }, missingAmount: { color: 'white', fontSize: 48, fontWeight: '800', marginTop: 10 }, missingBody: { color: '#FFE9E6', fontSize: 14, lineHeight: 22, marginTop: 10 }, missingActions: { marginTop: 18, gap: 10 }, missingButton: { backgroundColor: 'white', borderRadius: 12, alignItems: 'center', paddingVertical: 14 }, missingButtonText: { color: '#B3261E', fontWeight: '800', fontSize: 15 }, missingGhost: { borderWidth: 1, borderColor: '#FFB4A8', borderRadius: 12, alignItems: 'center', paddingVertical: 13 }, missingGhostText: { color: 'white', fontWeight: '700', fontSize: 14 },
-  okCard: { backgroundColor: '#E7F4EE', borderRadius: 16, padding: 22, marginTop: 6 }, okTitle: { color: '#086C65', fontSize: 19, fontWeight: '800' }, okBody: { color: '#526973', fontSize: 14, lineHeight: 21, marginTop: 7 },
+  screen: { flex: 1, backgroundColor: color.background },
+  appBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing[4], paddingTop: spacing[3], paddingBottom: spacing[3], backgroundColor: color.background },
+  mark: { width: 34, height: 34, borderRadius: radius.sm, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', marginRight: spacing[3] },
+  brand: { ...type.title, color: color.onSurface, letterSpacing: -0.2 },
+  appBarAction: { marginLeft: 'auto', width: 40, height: 40, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
+  pressed: { opacity: 0.72 },
+  body: { paddingHorizontal: spacing[5], paddingTop: spacing[2], paddingBottom: 110 },
+
+  overline: { ...type.overline, color: color.primary, marginBottom: spacing[2] },
+  headline: { ...type.headline, color: color.onSurface, marginBottom: spacing[2] },
+  lede: { ...type.body, color: color.onSurfaceVariant, marginBottom: spacing[5] },
+  title: { ...type.title, color: color.onSurface },
+  titleSm: { ...type.titleSm, color: color.onSurface },
+  supporting: { ...type.bodySm, color: color.onSurfaceVariant, marginTop: 2 },
+  supportingBlock: { ...type.bodySm, color: color.onSurfaceVariant, lineHeight: 21 },
+  fine: { ...type.bodySm, color: color.onSurfaceFaint, lineHeight: 20, marginTop: spacing[4] },
+
+  hero: { backgroundColor: color.surfaceDark, borderRadius: radius.lg, padding: spacing[5], ...elevation[2] },
+  heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  heroLabel: { ...type.overline, color: color.onSurfaceDarkMuted },
+  heroAmount: { ...type.display, ...type.tabular, color: color.onSurfaceDark, marginTop: spacing[3] },
+  heroAmountMissing: { color: color.errorOnDark },
+  heroCaption: { ...type.bodySm, color: color.onSurfaceDarkMuted, marginTop: spacing[1] },
+  progressTrack: { height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.16)', marginTop: spacing[5], overflow: 'hidden' },
+  progressFill: { height: 6, borderRadius: 3, backgroundColor: color.primaryContainer },
+  heroFoot: { ...type.bodySm, color: color.onSurfaceDarkMuted, lineHeight: 20, marginTop: spacing[3] },
+  heroMeta: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], marginTop: spacing[4] },
+  heroMetaText: { fontSize: 12, color: color.onSurfaceDarkMuted, fontWeight: '600' },
+
+  stateChipOk: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] + 2, backgroundColor: color.primaryContainer, borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: spacing[3] },
+  stateChipOkText: { fontSize: 12, fontWeight: '700', color: color.onPrimaryContainer },
+  stateChipError: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] + 2, backgroundColor: 'rgba(255,180,166,0.16)', borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: spacing[3] },
+  stateChipErrorText: { fontSize: 12, fontWeight: '700', color: color.errorOnDark },
+  stateChipWarn: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], backgroundColor: '#F7E8C9', borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: spacing[3] },
+  stateChipWarnText: { fontSize: 12, fontWeight: '700', color: '#7A5205' },
+  stateDot: { width: 8, height: 8, borderRadius: 4 },
+
+  statusChip: { flexDirection: 'row', alignItems: 'center', gap: spacing[1], backgroundColor: color.surfaceVariant, borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: spacing[2] + 2 },
+  statusChipText: { fontSize: 11.5, fontWeight: '700', color: color.onSurfaceVariant },
+  statusChipError: { flexDirection: 'row', alignItems: 'center', gap: spacing[1], backgroundColor: color.errorContainer, borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: spacing[2] + 2 },
+  statusChipErrorText: { fontSize: 11.5, fontWeight: '700', color: color.error },
+
+  liveCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: color.surface, borderRadius: radius.md, padding: spacing[4], marginTop: spacing[4], ...elevation[1] },
+  liveIcon: { width: 42, height: 42, borderRadius: radius.pill, backgroundColor: color.primaryContainer, alignItems: 'center', justifyContent: 'center', marginRight: spacing[3] },
+  liveText: { flex: 1 },
+  liveClock: { ...type.title, ...type.tabular, color: color.primary },
+
+  quickRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[2], marginTop: spacing[5] },
+  filledBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[2], backgroundColor: color.primary, borderRadius: radius.pill, minHeight: 52, paddingHorizontal: spacing[5] },
+  filledBtnText: { ...type.button, color: color.onPrimary },
+  tonalBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing[2], backgroundColor: color.primaryContainer, borderRadius: radius.pill, minHeight: 44, paddingHorizontal: spacing[4] },
+  tonalBtnLg: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[2], backgroundColor: color.primaryContainer, borderRadius: radius.pill, minHeight: 52, paddingHorizontal: spacing[5] },
+  tonalBtnText: { fontSize: 14.5, fontWeight: '700', color: color.onPrimaryContainer },
+  textBtn: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] + 2, borderRadius: radius.pill, paddingVertical: spacing[2], paddingHorizontal: spacing[2] },
+  textBtnText: { fontSize: 13.5, fontWeight: '700', color: color.primary },
+  textBtnDanger: { fontSize: 13.5, fontWeight: '700', color: color.error },
+  textBtnCenter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[2], paddingVertical: spacing[3], marginTop: spacing[2] },
+  disabledBtn: { backgroundColor: color.onSurfaceFaint },
+  spacedBtn: { marginTop: spacing[3] },
+
+  sectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing[6], marginBottom: spacing[3] },
+
+  empty: { backgroundColor: color.surface, borderRadius: radius.lg, padding: spacing[5], alignItems: 'flex-start', ...elevation[1] },
+  emptyIcon: { width: 56, height: 56, borderRadius: radius.pill, backgroundColor: color.primaryContainer, alignItems: 'center', justifyContent: 'center', marginBottom: spacing[4] },
+  emptyTitle: { ...type.titleSm, color: color.onSurface },
+  emptyBody: { ...type.bodySm, color: color.onSurfaceVariant, lineHeight: 21, marginTop: spacing[2] },
+  emptyBtn: { marginTop: spacing[5], minHeight: 46, paddingHorizontal: spacing[5] },
+
+  record: { backgroundColor: color.surface, borderRadius: radius.md, padding: spacing[4], marginBottom: spacing[3], ...elevation[1] },
+  recordHead: { flexDirection: 'row', alignItems: 'center' },
+  avatar: { width: 42, height: 42, borderRadius: radius.pill, backgroundColor: color.primaryContainer, alignItems: 'center', justifyContent: 'center', marginRight: spacing[3] },
+  avatarText: { fontSize: 14, fontWeight: '800', color: color.onPrimaryContainer },
+  recordTitles: { flex: 1, minWidth: 0 },
+  amountRow: { flexDirection: 'row', gap: spacing[5], marginTop: spacing[3], paddingTop: spacing[3], borderTopWidth: 1, borderTopColor: color.outline },
+  amountCell: { ...type.bodySm, color: color.onSurfaceVariant },
+  amountStrong: { color: color.onSurface, fontWeight: '800' },
+  note: { ...type.bodySm, color: color.onSurfaceVariant, marginTop: spacing[2] },
+  timeline: { marginTop: spacing[3], gap: spacing[2] },
+  timelineRow: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+  timelineText: { ...type.bodySm, color: color.onSurfaceVariant },
+  recordActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[1], marginTop: spacing[3] },
+  paymentForm: { marginTop: spacing[3], paddingTop: spacing[3], borderTopWidth: 1, borderTopColor: color.outline },
+
+  field: { marginBottom: spacing[4] },
+  fieldLabel: { ...type.overline, color: color.onSurfaceVariant, marginBottom: spacing[2] },
+  input: { backgroundColor: color.surface, borderWidth: 1, borderColor: color.outlineStrong, borderRadius: radius.sm, paddingHorizontal: spacing[4], paddingVertical: 13, color: color.onSurface, fontSize: 16 },
+  inputFocused: { borderColor: color.primary, borderWidth: 2 },
+
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing[2], marginBottom: spacing[5] },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: spacing[1] + 2, borderWidth: 1, borderColor: color.outlineStrong, backgroundColor: color.surface, borderRadius: radius.xs + 2, paddingVertical: spacing[2], paddingHorizontal: spacing[3] },
+  chipActive: { backgroundColor: color.primaryContainer, borderColor: color.primaryContainer },
+  chipText: { fontSize: 13.5, fontWeight: '600', color: color.onSurfaceVariant },
+  chipTextActive: { color: color.onPrimaryContainer, fontWeight: '700' },
+
+  segmented: { flexDirection: 'row', borderWidth: 1, borderColor: color.outlineStrong, borderRadius: radius.pill, overflow: 'hidden', marginBottom: spacing[5], backgroundColor: color.surface },
+  seg: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[1] + 2, paddingVertical: spacing[3] },
+  segDivider: { borderLeftWidth: 1, borderLeftColor: color.outlineStrong },
+  segActive: { backgroundColor: color.primaryContainer },
+  segText: { fontSize: 13.5, fontWeight: '600', color: color.onSurfaceVariant },
+  segTextActive: { color: color.onPrimaryContainer, fontWeight: '700' },
+
+  timerCard: { backgroundColor: color.surface, borderRadius: radius.lg, padding: spacing[5], alignItems: 'center', ...elevation[1] },
+  timerClock: { ...type.timer, ...type.tabular, color: color.onSurface, marginTop: spacing[4] },
+  timerMeta: { ...type.bodySm, color: color.onSurfaceVariant, marginTop: spacing[2] },
+  counterRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[5], marginVertical: spacing[5] },
+  counterBtn: { width: 52, height: 52, borderRadius: radius.pill, backgroundColor: color.primaryContainer, alignItems: 'center', justifyContent: 'center' },
+  counterMiddle: { alignItems: 'center', minWidth: 96 },
+  counterValue: { fontSize: 30, fontWeight: '800', color: color.onSurface, ...type.tabular },
+
+  missingCard: { backgroundColor: color.error, borderRadius: radius.lg, padding: spacing[5], ...elevation[2] },
+  missingTop: { flexDirection: 'row', alignItems: 'center', gap: spacing[2] },
+  missingLabel: { ...type.overline, color: color.errorOnDark },
+  missingAmount: { ...type.display, ...type.tabular, color: color.onError, marginTop: spacing[3] },
+  missingBody: { fontSize: 14.5, lineHeight: 22, color: '#FFE9E6', marginTop: spacing[2] },
+  missingBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing[2], backgroundColor: color.onError, borderRadius: radius.pill, minHeight: 50, marginTop: spacing[5] },
+  missingBtnText: { ...type.button, color: color.error },
+  missingGhost: { alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.55)', borderRadius: radius.pill, minHeight: 48, marginTop: spacing[2] },
+  missingGhostText: { fontSize: 14.5, fontWeight: '700', color: color.onError },
+
+  okCard: { flexDirection: 'row', backgroundColor: color.surface, borderRadius: radius.lg, padding: spacing[5], ...elevation[1] },
+  okIcon: { width: 48, height: 48, borderRadius: radius.pill, backgroundColor: color.primaryContainer, alignItems: 'center', justifyContent: 'center', marginRight: spacing[4] },
+  okText: { flex: 1 },
+  okBody: { ...type.bodySm, color: color.onSurfaceVariant, lineHeight: 21, marginTop: spacing[1] },
+
+  packetCard: { backgroundColor: color.surface, borderRadius: radius.md, padding: spacing[4], marginBottom: spacing[3], ...elevation[1] },
+  packetSelected: { borderWidth: 2, borderColor: color.primary },
+  packetMissing: { fontSize: 19, fontWeight: '800', color: color.error, marginTop: spacing[3] },
+  packetPaid: { fontSize: 19, fontWeight: '800', color: color.primary, marginTop: spacing[3] },
+
+  monthTitle: { marginTop: spacing[6], marginBottom: spacing[2] },
+  monthRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: spacing[3], borderBottomWidth: 1, borderBottomColor: color.outline },
+  monthMissing: { fontSize: 13, fontWeight: '700', color: color.error, marginTop: 2 },
+
+  plusCard: { backgroundColor: color.surfaceDark, borderRadius: radius.lg, padding: spacing[5], marginBottom: spacing[5], ...elevation[2] },
+  plusTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  plusBadge: { width: 42, height: 42, borderRadius: radius.pill, backgroundColor: color.primaryContainer, alignItems: 'center', justifyContent: 'center' },
+  plusChip: { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: radius.pill, paddingVertical: 5, paddingHorizontal: spacing[3] },
+  plusChipText: { fontSize: 12, fontWeight: '700', color: color.onSurfaceDarkMuted },
+  plusTitle: { fontSize: 27, lineHeight: 32, fontWeight: '800', color: color.onSurfaceDark, marginTop: spacing[4] },
+  plusPrice: { ...type.bodySm, color: color.onSurfaceDarkMuted, lineHeight: 21, marginTop: spacing[2] },
+  benefits: { marginTop: spacing[5], gap: spacing[3] },
+  benefitRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing[2] },
+  benefit: { flex: 1, fontSize: 14.5, lineHeight: 21, fontWeight: '600', color: color.onSurfaceDark },
+
+  planCard: { flexDirection: 'row', alignItems: 'center', gap: spacing[3], backgroundColor: color.surface, borderWidth: 1, borderColor: color.outline, borderRadius: radius.md, padding: spacing[4], marginBottom: spacing[2] },
+  planChosen: { borderColor: color.primary, borderWidth: 2 },
+  planPrice: { ...type.titleSm, color: color.onSurface, ...type.tabular },
+
+  fab: { position: 'absolute', right: spacing[4], bottom: 96, width: 56, height: 56, borderRadius: radius.md, backgroundColor: color.primary, alignItems: 'center', justifyContent: 'center', ...elevation[3] },
+  fabPressed: { backgroundColor: color.primaryPressed },
+
+  snackbar: { position: 'absolute', left: spacing[4], right: spacing[4], bottom: 92, flexDirection: 'row', alignItems: 'center', backgroundColor: color.surfaceDark, borderRadius: radius.sm, paddingVertical: spacing[3], paddingLeft: spacing[4], paddingRight: spacing[2], ...elevation[3] },
+  snackbarText: { flex: 1, fontSize: 13.5, lineHeight: 19, color: color.onSurfaceDark, fontWeight: '600' },
+  snackClose: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center' },
+
+  nav: { flexDirection: 'row', backgroundColor: color.surface, borderTopWidth: 1, borderTopColor: color.outline, paddingTop: spacing[2], paddingBottom: spacing[2] },
+  navItem: { flex: 1, alignItems: 'center', paddingVertical: spacing[1] },
+  navPill: { width: 56, height: 32, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center' },
+  navPillActive: { backgroundColor: color.primaryContainer },
+  navBadge: { position: 'absolute', top: 6, right: 12, width: 8, height: 8, borderRadius: 4, backgroundColor: color.error, borderWidth: 1.5, borderColor: color.surface },
+  navLabel: { fontSize: 11.5, fontWeight: '600', color: color.onSurfaceVariant, marginTop: 3 },
+  navLabelActive: { color: color.onSurface, fontWeight: '800' },
 });
