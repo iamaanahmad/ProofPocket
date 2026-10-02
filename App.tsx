@@ -218,7 +218,12 @@ export default function App() {
   }
   function loadDemo() {
     if (hasDemo) { setMessage('Demo data is already in your log.'); return; }
-    setShifts(current => [...demoShifts(new Date()), ...current]);
+    const now = new Date();
+    const prev = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+    const prevMonth = `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, '0')}`;
+    setShifts(current => [...demoShifts(now), ...current]);
+    setCheckClient('Cafe Aroma');
+    setCheckMonth(prevMonth);
     setMessage('Demo month loaded: three clients, a few short payments. Try Payout check.');
     setTab('home');
   }
